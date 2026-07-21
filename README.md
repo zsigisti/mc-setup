@@ -1,16 +1,16 @@
-##mc-setup
+## mc-setup
 
 Provisions a Minecraft network — Velocity proxy + Paper 1.21.11 lobby — on Debian 13 (Trixie) or Raspberry Pi OS. No Bedrock. Two modes: full server (Java + MariaDB + Redis/Valkey + systemd) or a portable jars-only folder.
 
 Quick start
 
-##Full install (Java, MariaDB, Redis/Valkey, /opt/minecraft, systemd services — needs root):
+## Full install (Java, MariaDB, Redis/Valkey, /opt/minecraft, systemd services — needs root):
 
-###curl -fsSL https://raw.githubusercontent.com/zsigisti/mc-setup/refs/heads/master/mcnet-setup.sh | sudo bash -s -- full
+### curl -fsSL https://raw.githubusercontent.com/zsigisti/mc-setup/refs/heads/master/mcnet-setup.sh | sudo bash -s -- full
 
-##Jars only (no root, no apt, no DB — drops ./proxy and ./lobby into the current directory):
+## Jars only (no root, no apt, no DB — drops ./proxy and ./lobby into the current directory):
 
-###curl -fsSL https://raw.githubusercontent.com/zsigisti/mc-setup/main/mcnet-setup.sh | bash -s -- jars
+### curl -fsSL https://raw.githubusercontent.com/zsigisti/mc-setup/main/mcnet-setup.sh | bash -s -- jars
 
 Piping into sudo bash runs the script the moment it downloads. Read it first if you'd rather:
 

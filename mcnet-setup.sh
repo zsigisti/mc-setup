@@ -34,8 +34,8 @@ PROXY_XMX="512M"
 # Change the contact URL to your own if you like.
 USER_AGENT="mcnet-setup/1.0 (+https://github.com/zsigisti/mcnet-setup)"
 
-# Backend (Paper) loader group used for Modrinth queries.
-PAPER_LOADERS='paper","purpur","spigot","bukkit","folia'
+# Backend (Paper) loader group used for Modrinth queries (comma-separated).
+PAPER_LOADERS="paper,purpur,spigot,bukkit,folia"
 
 # Lobby plugins:  source|id|display-name   (loader defaults to the Paper group)
 LOBBY_PLUGINS=(
@@ -51,7 +51,7 @@ LOBBY_PLUGINS=(
   "modrinth|tab-was-taken|TAB"
   "modrinth|decentholograms|DecentHolograms"
   "modrinth|fancynpcs|FancyNPCs"
-  "github|HelpChat/DeluxeMenus|DeluxeMenus"
+  "modrinth|deluxemenus|DeluxeMenus"
   "github|MilkBowl/Vault|Vault"
 )
 
@@ -78,6 +78,12 @@ FAILED_PLUGINS=()
 genpw() { head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24; }
 gensecret() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
+# Reuse an existing forwarding secret on re-run so proxy/lobby stay in sync.
+get_or_make_secret() { # FILE -> echoes secret (creating it if absent)
+  local f="$1" s
+  if [[ -s "$f" ]]; then cat "$f"; else s="$(gensecret)"; printf '%s' "$s" >"$f"; printf '%s' "$s"; fi
+}
+
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 detect_os() {
@@ -93,8 +99,12 @@ detect_os() {
   log "OS=$OS_ID  arch=$ARCH"
 }
 
-# curl wrapper: descriptive UA, retries, fail on HTTP error
-fetch() { curl -fsSL --retry 3 --retry-delay 2 -A "$USER_AGENT" "$@"; }
+# curl wrapper: descriptive UA, retries, fail on HTTP error, globbing off
+# (-g/--globoff prevents curl from interpreting [ ] in URLs as glob ranges).
+fetch() { curl -fsSL -g --retry 3 --retry-delay 2 -A "$USER_AGENT" "$@"; }
+
+# Build a JSON array string from a comma-separated list: "a,b" -> ["a","b"]
+csv_to_json_array() { printf '%s' "$1" | jq -Rc 'split(",")'; }
 
 # ------------------------------------------------------- PaperMC Fill v3 ------
 # fill_download PROJECT VERSION CHANNEL OUTFILE
@@ -154,14 +164,21 @@ fill_download() { # PROJECT VERSION CHANNEL OUTFILE
 }
 
 # ------------------------------------------------------------- Modrinth -------
-# modrinth_file_url SLUG LOADERS GAMEVERSION  -> URL (or empty)
+# modrinth_file_url SLUG LOADERS_CSV GAMEVERSION  -> URL (or empty)
+# Query params are JSON arrays that MUST be URL-encoded; we let curl -G
+# --data-urlencode handle encoding rather than putting raw [ ] " in the URL.
 modrinth_file_url() {
-  local slug="$1" loaders="$2" gv="$3" q resp
-  # try with game-version filter, then without
-  for q in \
-    "loaders=[\"${loaders//\"/\"}\"]&game_versions=[\"${gv}\"]" \
-    "loaders=[\"${loaders//\"/\"}\"]" ; do
-    resp="$(fetch "https://api.modrinth.com/v2/project/${slug}/version?${q}" 2>/dev/null || true)"
+  local slug="$1" loaders_csv="$2" gv="$3" lj resp withgv
+  lj="$(csv_to_json_array "$loaders_csv")"      # e.g. ["paper","spigot"]
+  local url="https://api.modrinth.com/v2/project/${slug}/version"
+  # pass 1: constrain by game version; pass 2: loaders only (handles version-tag lag)
+  for withgv in 1 0; do
+    if [[ "$withgv" == 1 ]]; then
+      resp="$(fetch -G --data-urlencode "loaders=${lj}" \
+                       --data-urlencode "game_versions=[\"${gv}\"]" "$url" 2>/dev/null || true)"
+    else
+      resp="$(fetch -G --data-urlencode "loaders=${lj}" "$url" 2>/dev/null || true)"
+    fi
     echo "$resp" | jq -e 'type=="array" and length>0' >/dev/null 2>&1 || continue
     echo "$resp" | jq -r '
       sort_by(.date_published) | reverse | .[0]
@@ -173,7 +190,10 @@ modrinth_file_url() {
 }
 
 modrinth_resolve_slug() { # NAME -> slug via search (fallback when slug is wrong)
-  fetch "https://api.modrinth.com/v2/search?limit=1&query=$(printf '%s' "$1" | jq -sRr @uri)&facets=%5B%5B%22project_type%3Aplugin%22%5D%5D" 2>/dev/null \
+  fetch -G --data-urlencode "query=$1" \
+           --data-urlencode 'facets=[["project_type:plugin"]]' \
+           --data-urlencode 'limit=1' \
+           "https://api.modrinth.com/v2/search" 2>/dev/null \
     | jq -r '.hits[0].slug // empty'
 }
 
@@ -442,8 +462,7 @@ run_full() {
   install_packages
   setup_user_dirs
 
-  local secret; secret="$(gensecret)"
-  echo -n "$secret" >"${BASE_FULL}/proxy/forwarding.secret"
+  local secret; secret="$(get_or_make_secret "${BASE_FULL}/proxy/forwarding.secret")"
 
   # Proxy
   log "Provisioning proxy ..."
@@ -482,8 +501,7 @@ run_jars() {
   local base; base="$(pwd)"
   mkdir -p "${base}/proxy/plugins" "${base}/lobby/plugins"
 
-  local secret; secret="$(gensecret)"
-  echo -n "$secret" >"${base}/proxy/forwarding.secret"
+  local secret; secret="$(get_or_make_secret "${base}/proxy/forwarding.secret")"
 
   log "Provisioning proxy (jars) ..."
   fill_download velocity "$VELOCITY_VERSION" RECOMMENDED "${base}/proxy/velocity.jar"
